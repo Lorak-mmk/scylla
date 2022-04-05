@@ -6,6 +6,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#include <memory>
+#include <optional>
 #include <seastar/core/on_internal_error.hh>
 #include <map>
 #include "utils/UUID_gen.hh"
@@ -1672,6 +1674,10 @@ raw_view_info::raw_view_info(utils::UUID base_id, sstring base_name, bool includ
 
 column_computation_ptr column_computation::deserialize(bytes_view raw) {
     rjson::value parsed = rjson::parse(std::string_view(reinterpret_cast<const char*>(raw.begin()), reinterpret_cast<const char*>(raw.end())));
+    return deserialize(parsed);
+}
+
+column_computation_ptr column_computation::deserialize(const rjson::value& parsed) {
     if (!parsed.IsObject()) {
         throw std::runtime_error(format("Invalid column computation value: {}", parsed));
     }
@@ -1679,11 +1685,23 @@ column_computation_ptr column_computation::deserialize(bytes_view raw) {
     if (!type_json || !type_json->IsString()) {
         throw std::runtime_error(format("Type {} is not convertible to string", *type_json));
     }
-    if (rjson::to_string_view(*type_json) == "token") {
+    const std::string_view type = rjson::to_string_view(*type_json);
+    if (type == "token") {
         return std::make_unique<legacy_token_column_computation>();
     }
-    if (rjson::to_string_view(*type_json) == "token_v2") {
+    if (type == "token_v2") {
         return std::make_unique<token_column_computation>();
+    }
+    if (type.starts_with("collection_")) {
+        const rjson::value* collection_name = rjson::find(parsed, "collection_name");
+
+        if (collection_name && collection_name->IsString()) {
+            auto collection = rjson::to_string_view(*collection_name);
+            auto collection_as_bytes = bytes(collection.begin(), collection.end());
+            if (auto collection = collection_column_computation::for_target_type(type, collection_as_bytes)) {
+                return collection->clone();
+            }
+        }
     }
     throw std::runtime_error(format("Incorrect column computation type {} found when parsing {}", *type_json, parsed));
 }
@@ -1694,8 +1712,8 @@ bytes legacy_token_column_computation::serialize() const {
     return to_bytes(rjson::print(serialized));
 }
 
-bytes_opt legacy_token_column_computation::compute_value(const schema& schema, const partition_key& key, const clustering_row& row) const {
-    return dht::get_token(schema, key).data();
+bytes legacy_token_column_computation::compute_value(const schema& schema, const partition_key& key) const {
+    return {dht::get_token(schema, key).data()};
 }
 
 bytes token_column_computation::serialize() const {
@@ -1704,9 +1722,124 @@ bytes token_column_computation::serialize() const {
     return to_bytes(rjson::print(serialized));
 }
 
-bytes_opt token_column_computation::compute_value(const schema& schema, const partition_key& key, const clustering_row& row) const {
+bytes token_column_computation::compute_value(const schema& schema, const partition_key& key) const {
     auto long_value = dht::token::to_int64(dht::get_token(schema, key));
-    return long_type->decompose(long_value);
+    return {long_type->decompose(long_value)};
+}
+
+bytes collection_column_computation::serialize() const {
+    rjson::value serialized = rjson::empty_object();
+    const char* type = nullptr;
+    switch (_kind) {
+        case kind::keys:
+            type = "collection_keys";
+            break;
+        case kind::values:
+            type = "collection_values";
+            break;
+        case kind::entries:
+            type = "collection_entries";
+            break;
+    }
+    rjson::add(serialized, "type", rjson::from_string(type));
+    rjson::add(serialized, "collection_name", rjson::from_string(sstring(_collection_name.begin(), _collection_name.end())));
+    return to_bytes(rjson::print(serialized));
+}
+
+column_computation_ptr collection_column_computation::for_target_type(std::string_view type, const bytes& collection_name) {
+    if (type == "collection_keys") {
+        return collection_column_computation::for_keys(collection_name).clone();
+    }
+    if (type == "collection_values") {
+        return collection_column_computation::for_values(collection_name).clone();
+    }
+    if (type == "collection_entries") {
+        return collection_column_computation::for_entries(collection_name).clone();
+    }
+    return {};
+}
+
+void collection_column_computation::operate_on_collection_entries(
+        std::invocable<collection_kv*, collection_kv*, tombstone> auto&& old_and_new_row_func, const schema& schema,
+        const partition_key& key, const clustering_row& update, const std::optional<clustering_row>& existing) const {
+
+    const column_definition* cdef = schema.get_column_definition(_collection_name);
+
+    auto get_cell = [](auto& kv) -> collection_kv::second_type& { return kv->second; };
+
+    decltype(collection_mutation_view_description::cells) update_cells, existing_cells;
+
+    const auto* update_cell = update.cells().find_cell(cdef->id);
+    if (update_cell) {
+        collection_mutation_view update_col_view = update_cell->as_collection_mutation();
+        update_col_view.with_deserialized(*(cdef->type), [&update_cells] (collection_mutation_view_description descr) {
+            update_cells = descr.cells;
+        });
+    }
+    if (existing) {
+        const auto* existing_cell = existing->cells().find_cell(cdef->id);
+        if (existing_cell) {
+            collection_mutation_view existing_col_view = existing_cell->as_collection_mutation();
+            existing_col_view.with_deserialized(*(cdef->type), [&existing_cells] (collection_mutation_view_description descr) {
+                existing_cells = descr.cells;
+            });
+        }
+    }
+
+
+    auto less = [](const collection_kv& p1, const collection_kv& p2) {
+        return p1.first < p2.first;
+    };
+
+    // Both collections are assumed to be sorted by the keys.
+    auto existing_it = existing_cells.begin();
+    auto update_it = update_cells.begin();
+    while (update_it < update_cells.end()) {
+        while (existing_it < existing_cells.end() && less(*existing_it, *update_it)) {
+            ++existing_it;
+        }
+
+        bool has_old_row = existing_it < existing_cells.end() && !less(*update_it, *existing_it);
+        old_and_new_row_func(has_old_row ? &*existing_it : nullptr, *update_it);
+        ++update_it;
+    }
+}
+
+bytes collection_column_computation::compute_value(const schema&, const partition_key&) const {
+    throw std::runtime_error(fmt::format("{}: not supported", __PRETTY_FUNCTION__));
+}
+
+std::vector<db::view::bytes_with_action> collection_column_computation::compute_values_with_action(const schema& schema, const partition_key& key, const clustering_row& update, const std::optional<clustering_row>& existing) const {
+    using collection_kv = std::pair<bytes_view, atomic_cell_view>;
+    auto serialize_cell = [_kind = _kind](const collection_kv& kv) -> bytes {
+        using kind = collection_column_computation::kind;
+        auto& [key, value] = kv;
+        switch (_kind) {
+            case kind::keys:
+                return bytes(key);
+            case kind::values:
+                return value.value().linearize();
+            case kind::entries:
+                bytes_opt elements[] = {bytes(key), value.value().linearize()};
+                return tuple_type_impl::build_value(elements);
+        }
+    };
+
+    std::vector<db::view::bytes_with_action> ret;
+
+    auto compute_row_marker = [] (auto&& cell) -> row_marker {
+        return cell.is_live_and_has_ttl() ? row_marker(cell.timestamp(), cell.ttl(), cell.expiry()) : row_marker(cell.timestamp());
+    };
+
+    auto fn = [&ret, &compute_row_marker, &serialize_cell] (collection_kv* existing, collection_kv& update) {
+        if (update.second.is_live()) {
+            ret.push_back({serialize_cell(update), {compute_row_marker(update.second)}});
+        } else if (existing && existing->second.is_live()) {
+            ret.push_back({serialize_cell(*existing), {db::view::bytes_with_action::shadowable_tombstone_tag{update.second.timestamp()}}});
+        }
+    };
+    operate_on_collection_entries(fn, schema, key, update, existing);
+    return ret;
 }
 
 bool operator==(const raw_view_info& x, const raw_view_info& y) {

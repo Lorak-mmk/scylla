@@ -123,6 +123,28 @@ bool matches_view_filter(const schema& base, const view_info& view, const partit
 
 bool clustering_prefix_matches(const schema& base, const partition_key& key, const clustering_key_prefix& ck);
 
+struct bytes_with_action {
+    struct no_action {};
+    struct shadowable_tombstone_tag {
+        api::timestamp_type ts;
+        shadowable_tombstone into_shadowable_tombstone(gc_clock::time_point now) const {
+            return shadowable_tombstone{ts, now};
+        }
+    };
+    using action = std::variant<no_action, row_marker, shadowable_tombstone_tag>;
+
+    bytes _view;
+    action _action = no_action{};
+
+    bytes_with_action(bytes view)
+        : _view(std::move(view))
+    {}
+    bytes_with_action(bytes view, action action)
+        : _view(std::move(view))
+        , _action(action)
+    {}
+};
+
 class view_updates final {
     view_ptr _view;
     const view_info& _view_info;
