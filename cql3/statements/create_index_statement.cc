@@ -13,6 +13,7 @@
 
 #include <seastar/core/coroutine.hh>
 #include "create_index_statement.hh"
+#include "exceptions/exceptions.hh"
 #include "prepared_statement.hh"
 #include "validation.hh"
 #include "service/storage_proxy.hh"
@@ -136,8 +137,11 @@ std::vector<::shared_ptr<index_target>> create_index_statement::validate_while_e
         if (cd->type->is_multi_cell()) {
             // NOTICE(sarna): should be lifted after #2962 (indexes on non-frozen collections) is implemented
             // NOTICE(kbraun): don't forget about non-frozen user defined types
-            throw exceptions::invalid_request_exception(
-                    format("Cannot create secondary index on non-frozen collection or UDT column {}", cd->name_as_text()));
+            if (cd->type->is_collection()) {
+                validate_for_collection(*target, *cd);
+            } else {
+                throw exceptions::invalid_request_exception(format("Cannot create secondary index on UDT column {}", cd->name_as_text()));
+            }
         } else if (cd->type->is_collection()) {
             validate_for_frozen_collection(*target);
         } else {
@@ -199,6 +203,35 @@ void create_index_statement::validate_for_frozen_collection(const index_target& 
                 format("Cannot create index on {} of frozen collection column {}",
                         index_target::index_option(target.type),
                         target.as_string()));
+    }
+}
+
+void create_index_statement::validate_for_collection(const index_target& target, const column_definition& cd) const
+{
+    auto throw_exception = [&] {
+        const char* msg_format = "Cannot create secondary index on {} of non-frozen collection column {}";
+        throw exceptions::invalid_request_exception(format(msg_format, to_sstring(target.type), cd.name_as_text()));
+    };
+    switch (target.type) {
+        case index_target::target_type::regular_values:
+            [[fallthrough]];
+        case index_target::target_type::full:
+            throw_exception();
+        case index_target::target_type::keys:
+            if (!cd.type->is_map() && !cd.type->is_set()) {
+                throw_exception();
+            }
+            break;
+        case index_target::target_type::collection_values:
+            if (!cd.type->is_map() && !cd.type->is_list()) {
+                throw_exception();
+            }
+            break;
+        case index_target::target_type::keys_and_values:
+            if (!cd.type->is_map()) {
+                throw_exception();
+            }
+            break;
     }
 }
 

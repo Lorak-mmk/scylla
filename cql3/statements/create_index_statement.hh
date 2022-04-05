@@ -57,6 +57,7 @@ public:
 private:
     void validate_for_local_index(const schema& schema) const;
     void validate_for_frozen_collection(const index_target& target) const;
+    void validate_for_collection(const index_target& target, const column_definition&) const;
     void validate_not_full_index(const index_target& target) const;
     void validate_is_values_index_if_target_column_not_collection(const column_definition* cd,
                                                                   const index_target& target) const;
