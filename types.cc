@@ -23,6 +23,7 @@
 #include <cmath>
 #include <chrono>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <regex>
 #include <concepts>
@@ -945,6 +946,51 @@ bool abstract_type::is_compatible_with(const abstract_type& previous) const {
 
 cql3::cql3_type abstract_type::as_cql3_type() const {
     return cql3::cql3_type(shared_from_this());
+}
+
+const data_type collection_keys_type(const abstract_type& t) {
+    struct visitor {
+        const data_type operator()(const abstract_type& t) {
+            throw std::runtime_error(format("collection_keys_type: only collections (maps, lists and sets) supported, but received {}", t.cql3_type_name()));
+        }
+        const data_type operator()(const list_type_impl& l) {
+            return timeuuid_type;
+        }
+        const data_type operator()(const map_type_impl& m) {
+            return m.get_keys_type();
+        }
+        const data_type operator()(const set_type_impl& s) {
+            return s.get_elements_type();
+        }
+    };
+    return visit(t, visitor{});
+}
+
+const data_type collection_values_type(const abstract_type& t) {
+    struct visitor {
+        const data_type operator()(const abstract_type& t) {
+            throw std::runtime_error(format("collection_values_type: only maps and lists supported, but received {}", t.cql3_type_name()));
+        }
+        const data_type operator()(const map_type_impl& m) {
+            return m.get_values_type();
+        }
+        const data_type operator()(const list_type_impl& l) {
+            return l.get_elements_type();
+        }
+    };
+    return visit(t, visitor{});
+}
+
+const data_type collection_entries_type(const abstract_type& t) {
+    struct visitor {
+        const data_type operator()(const abstract_type& t) {
+            throw std::runtime_error(format("collection_entries_type: only maps supported, but received {}", t.cql3_type_name()));
+        }
+        const data_type operator()(const map_type_impl& m) {
+            return tuple_type_impl::get_instance({m.get_keys_type(), m.get_values_type()});
+        }
+    };
+    return visit(t, visitor{});
 }
 
 static sstring cql3_type_name_impl(const abstract_type& t) {

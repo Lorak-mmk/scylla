@@ -1216,3 +1216,7 @@ struct appending_hash<data_type> {
         feed_hash(h, v->name());
     }
 };
+
+const data_type collection_keys_type(const abstract_type& t);
+const data_type collection_values_type(const abstract_type& t);
+const data_type collection_entries_type(const abstract_type& t);
