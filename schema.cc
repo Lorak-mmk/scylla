@@ -6,10 +6,12 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+#include <compare>
 #include <memory>
 #include <optional>
 #include <seastar/core/on_internal_error.hh>
 #include <map>
+#include "timestamp.hh"
 #include "utils/UUID_gen.hh"
 #include "cql3/column_identifier.hh"
 #include "cql3/util.hh"
@@ -24,6 +26,7 @@
 #include <boost/range/algorithm.hpp>
 #include <boost/algorithm/cxx11/any_of.hpp>
 #include <stdexcept>
+#include <type_traits>
 #include "view_info.hh"
 #include "partition_slice_builder.hh"
 #include "replica/database.hh"
@@ -1771,9 +1774,11 @@ void collection_column_computation::operate_on_collection_entries(
     decltype(collection_mutation_view_description::cells) update_cells, existing_cells;
 
     const auto* update_cell = update.cells().find_cell(cdef->id);
+    tombstone update_tombstone = update.tomb().tomb();
     if (update_cell) {
         collection_mutation_view update_col_view = update_cell->as_collection_mutation();
-        update_col_view.with_deserialized(*(cdef->type), [&update_cells] (collection_mutation_view_description descr) {
+        update_col_view.with_deserialized(*(cdef->type), [&update_cells, &update_tombstone] (collection_mutation_view_description descr) {
+            update_tombstone.apply(descr.tomb);
             update_cells = descr.cells;
         });
     }
@@ -1787,22 +1792,44 @@ void collection_column_computation::operate_on_collection_entries(
         }
     }
 
-
-    auto less = [](const collection_kv& p1, const collection_kv& p2) {
-        return p1.first < p2.first;
+    auto compare = [](const collection_kv& p1, const collection_kv& p2) {
+        return p1.first <=> p2.first;
     };
 
     // Both collections are assumed to be sorted by the keys.
     auto existing_it = existing_cells.begin();
     auto update_it = update_cells.begin();
-    while (update_it < update_cells.end()) {
-        while (existing_it < existing_cells.end() && less(*existing_it, *update_it)) {
+
+    auto is_existing_end = [&] {
+        return existing_it == existing_cells.end();
+    };
+    auto is_update_end = [&] {
+        return update_it == update_cells.end();
+    };
+    while (!(is_existing_end() && is_update_end())) {
+        std::strong_ordering cmp = [&] {
+            if (is_existing_end()) {
+                return std::strong_ordering::greater;
+            } else if (is_update_end()) {
+                return std::strong_ordering::less;
+            }
+            return compare(*existing_it, *update_it);
+        }();
+
+        auto existing_ptr = [&] () -> collection_kv* {
+            return (!is_existing_end() && cmp <= 0) ? &*existing_it : nullptr;
+        };
+        auto update_ptr = [&] () -> collection_kv* {
+            return (!is_update_end() && cmp >= 0) ? &*update_it : nullptr;
+        };
+
+        old_and_new_row_func(existing_ptr(), update_ptr(), update_tombstone);
+        if (cmp <= 0) {
             ++existing_it;
         }
-
-        bool has_old_row = existing_it < existing_cells.end() && !less(*update_it, *existing_it);
-        old_and_new_row_func(has_old_row ? &*existing_it : nullptr, *update_it);
-        ++update_it;
+        if (cmp >= 0) {
+            ++update_it;
+        }
     }
 }
 
@@ -1832,11 +1859,22 @@ std::vector<db::view::bytes_with_action> collection_column_computation::compute_
         return cell.is_live_and_has_ttl() ? row_marker(cell.timestamp(), cell.ttl(), cell.expiry()) : row_marker(cell.timestamp());
     };
 
-    auto fn = [&ret, &compute_row_marker, &serialize_cell] (collection_kv* existing, collection_kv& update) {
-        if (update.second.is_live()) {
-            ret.push_back({serialize_cell(update), {compute_row_marker(update.second)}});
-        } else if (existing && existing->second.is_live()) {
-            ret.push_back({serialize_cell(*existing), {db::view::bytes_with_action::shadowable_tombstone_tag{update.second.timestamp()}}});
+    auto fn = [&ret, &compute_row_marker, &serialize_cell] (collection_kv* existing, collection_kv* update, tombstone tomb) {
+        api::timestamp_type operation_ts = tomb.timestamp;
+        if (existing && update && compare_atomic_cell_for_merge(existing->second, update->second) == 0) {
+            return;
+        }
+        if (update) {
+            operation_ts = update->second.timestamp();
+            if (update->second.is_live()) {
+                row_marker rm = compute_row_marker(update->second);
+                ret.push_back({serialize_cell(*update), {rm}});
+            }
+        }
+        operation_ts -= 1;
+        if (existing && existing->second.is_live()) {
+            db::view::bytes_with_action::shadowable_tombstone_tag tag{operation_ts};
+            ret.push_back({serialize_cell(*existing), {tag}});
         }
     };
     operate_on_collection_entries(fn, schema, key, update, existing);
