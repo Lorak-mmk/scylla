@@ -16,6 +16,7 @@
 #include "schema.hh"
 
 #include "data_dictionary/data_dictionary.hh"
+#include "cql3/statements/index_target.hh"
 
 #include <vector>
 #include <set>
@@ -38,8 +39,9 @@ sstring index_table_name(const sstring& index_name);
 sstring index_name_from_table_name(const sstring& table_name);
 
 class index {
-    sstring _target_column;
     index_metadata _im;
+    cql3::statements::index_target::target_type _target_type;
+    sstring _target_column;
 public:
     index(const sstring& target_column, const index_metadata& im);
     bool depends_on(const column_definition& cdef) const;
