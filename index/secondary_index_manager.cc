@@ -11,6 +11,8 @@
  * SPDX-License-Identifier: (AGPL-3.0-or-later and Apache-2.0)
  */
 
+#include <seastar/core/shared_ptr.hh>
+
 #include "index/secondary_index_manager.hh"
 
 #include "cql3/statements/index_target.hh"
@@ -30,8 +32,9 @@
 namespace secondary_index {
 
 index::index(const sstring& target_column, const index_metadata& im)
-    : _target_column{target_column}
-    , _im{im}
+    : _im{im}
+    , _target_type{cql3::statements::index_target::from_target_string(target_column)}
+    , _target_column{cql3::statements::index_target::column_name_from_target_string(target_column)}
 {}
 
 bool index::depends_on(const column_definition& cdef) const {
@@ -39,7 +42,28 @@ bool index::depends_on(const column_definition& cdef) const {
 }
 
 bool index::supports_expression(const column_definition& cdef, const cql3::expr::oper_t op) const {
-    return cdef.name_as_text() == _target_column && op == cql3::expr::oper_t::EQ;
+    using target_type = cql3::statements::index_target::target_type;
+    if (cdef.name_as_text() != _target_column) {
+        return false;
+    }
+
+    if (op == cql3::expr::oper_t::EQ) {
+        // if (is_subscript) {
+        //     return _target_type == target_type::keys_and_values;
+        // }
+
+        return _target_type == target_type::regular_values;
+    }
+    // if (is_subscript) {
+    //     return false;
+    // }
+    if (op == cql3::expr::oper_t::CONTAINS && _target_type == target_type::collection_values) {
+        return true;
+    }
+    if (op == cql3::expr::oper_t::CONTAINS_KEY && _target_type == target_type::keys) {
+        return true;
+    }
+    return false;
 }
 
 const index_metadata& index::metadata() const {
