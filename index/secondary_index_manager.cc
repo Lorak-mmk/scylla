@@ -47,16 +47,9 @@ bool index::supports_expression(const column_definition& cdef, const cql3::expr:
         return false;
     }
 
-    if (op == cql3::expr::oper_t::EQ) {
-        // if (is_subscript) {
-        //     return _target_type == target_type::keys_and_values;
-        // }
-
-        return _target_type == target_type::regular_values;
+    if (op == cql3::expr::oper_t::EQ && _target_type == target_type::regular_values) {
+        return true;
     }
-    // if (is_subscript) {
-    //     return false;
-    // }
     if (op == cql3::expr::oper_t::CONTAINS && _target_type == target_type::collection_values) {
         return true;
     }
