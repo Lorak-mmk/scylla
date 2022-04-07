@@ -32,6 +32,7 @@
 
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/algorithm/string/join.hpp>
+#include <stdexcept>
 
 namespace cql3 {
 
@@ -139,6 +140,7 @@ std::vector<::shared_ptr<index_target>> create_index_statement::validate_while_e
             // NOTICE(kbraun): don't forget about non-frozen user defined types
             if (cd->type->is_collection()) {
                 validate_for_collection(*target, *cd);
+                rewrite_target_for_collection(*target, *cd);
             } else {
                 throw exceptions::invalid_request_exception(format("Cannot create secondary index on UDT column {}", cd->name_as_text()));
             }
@@ -213,23 +215,44 @@ void create_index_statement::validate_for_collection(const index_target& target,
         throw exceptions::invalid_request_exception(format(msg_format, to_sstring(target.type), cd.name_as_text()));
     };
     switch (target.type) {
-        case index_target::target_type::regular_values:
-            [[fallthrough]];
         case index_target::target_type::full:
             throw_exception();
-        case index_target::target_type::keys:
-            if (!cd.type->is_map() && !cd.type->is_set()) {
-                throw_exception();
-            }
+        case index_target::target_type::regular_values:
             break;
         case index_target::target_type::collection_values:
-            if (!cd.type->is_map() && !cd.type->is_list()) {
-                throw_exception();
-            }
             break;
+        case index_target::target_type::keys:
+            [[fallthrough]];
         case index_target::target_type::keys_and_values:
             if (!cd.type->is_map()) {
                 throw_exception();
+            }
+            break;
+    }
+}
+
+void create_index_statement::rewrite_target_for_collection(index_target& target, const column_definition& cd) const
+{
+    // In Cassandra, `CREATE INDEX ON table(collection)` works the same as `CREATE INDEX ON table(VALUES(collection))`,
+    // and index on VALUES(collection) indexes values, if the collection was a map or a list, but it indexes the keys, if it
+    // was a set. Rewrite it to clean the mess.
+    switch (target.type) {
+        case index_target::target_type::full:
+            throw std::logic_error("invalid target type(full) in rewrite_target_for_collection");
+        case index_target::target_type::keys:
+            // If it was keys, then it must have been a map.
+            break;
+        case index_target::target_type::keys_and_values:
+            // If it was entries, then it must have been a map.
+            break;
+        case index_target::target_type::regular_values:
+        case index_target::target_type::collection_values:
+            if (cd.type->is_map() || cd.type->is_list()) {
+                target.type = index_target::target_type::collection_values;
+            } else if (cd.type->is_set()) {
+                target.type = index_target::target_type::keys;
+            } else {
+                throw std::logic_error(format("rewrite_target_for_collection: unknown collection type {}", cd.type->cql3_type_name()));
             }
             break;
     }
