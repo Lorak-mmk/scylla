@@ -161,7 +161,6 @@ sstring to_sstring(index_target::target_type type)
     case index_target::target_type::collection_values: return "values";
     case index_target::target_type::full: return "full";
     }
-    return "";
 }
 
 }
