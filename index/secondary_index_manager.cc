@@ -47,16 +47,28 @@ bool index::supports_expression(const column_definition& cdef, const cql3::expr:
         return false;
     }
 
-    if (op == cql3::expr::oper_t::EQ && _target_type == target_type::regular_values) {
-        return true;
+    switch (op) {
+        case cql3::expr::oper_t::EQ:
+            return _target_type == target_type::regular_values;
+        case cql3::expr::oper_t::CONTAINS:
+            if (cdef.type->is_set() && _target_type == target_type::keys) {
+                return true;
+            }
+            if (cdef.type->is_list() && _target_type == target_type::collection_values) {
+                return true;
+            }
+            if (cdef.type->is_map() && _target_type == target_type::collection_values) {
+                return true;
+            }
+            return false;
+        case cql3::expr::oper_t::CONTAINS_KEY:
+            if (cdef.type->is_map() && _target_type == target_type::keys) {
+                return true;
+            }
+            return false;
+        default:
+            return false;
     }
-    if (op == cql3::expr::oper_t::CONTAINS && _target_type == target_type::collection_values) {
-        return true;
-    }
-    if (op == cql3::expr::oper_t::CONTAINS_KEY && _target_type == target_type::keys) {
-        return true;
-    }
-    return false;
 }
 
 bool index::supports_subscript_expression(const column_definition& cdef, const cql3::expr::oper_t op) const {
