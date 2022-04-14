@@ -991,8 +991,8 @@ def testIndexOnNonFrozenCollectionOfFrozenUDT(cql, test_keyspace):
             execute(cql, table, "INSERT INTO %s (k, v) VALUES (?, ?)", 1, {udt1})
             # Reproduces #2962 - indexing of non-frozen collection is not
             # yet supported in any form.
-            assert_invalid_message(cql, table, "Cannot create index on keys of column v with non-map type", "CREATE INDEX ON %s (keys(v))")
-            assert_invalid_message(cql, table, "full() indexes can only be created on frozen collections", "CREATE INDEX ON %s (full(v))")
+            assert_invalid_message(cql, table, "Cannot create secondary index on keys of column v with non-map type", "CREATE INDEX ON %s (keys(v))")
+            assert_invalid_message(cql, table, "Cannot create secondary index on full of column v with non-frozen collection type", "CREATE INDEX ON %s (full(v))")
             index_name = unique_name()
             # Reproduces #8745:
             execute(cql, table, f"CREATE INDEX {index_name} ON %s (values(v))")
@@ -1008,7 +1008,7 @@ def testIndexOnNonFrozenCollectionOfFrozenUDT(cql, test_keyspace):
             assert_rows(execute(cql, table, "SELECT * FROM %s WHERE v CONTAINS ?", udt2), [2, {udt2}])
 
             execute(cql, table, f"DROP INDEX {test_keyspace}.{index_name}")
-            assert_invalid_message(cql, table, f"Index '{test_keyspace}.{index_name}' doesn't exist",
+            assert_invalid_message(cql, table, f"Index '{index_name}' could not be found in any of the tables of keyspace '{test_keyspace}'",
                              f"DROP INDEX {test_keyspace}.{index_name}")
             assert_invalid_message(cql, table, "ALLOW FILTERING",
                              "SELECT * FROM %s WHERE v CONTAINS ?", udt1)
