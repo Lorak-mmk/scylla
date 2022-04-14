@@ -216,7 +216,7 @@ void create_index_statement::validate_for_collection(const index_target& target,
     };
     switch (target.type) {
         case index_target::target_type::full:
-            throw_exception();
+            throw exceptions::invalid_request_exception(format("Cannot create secondary index on full of column {} with non-frozen collection type", cd.name_as_text()));
         case index_target::target_type::regular_values:
             break;
         case index_target::target_type::collection_values:
@@ -225,7 +225,8 @@ void create_index_statement::validate_for_collection(const index_target& target,
             [[fallthrough]];
         case index_target::target_type::keys_and_values:
             if (!cd.type->is_map()) {
-                throw_exception();
+                const char* msg_format = "Cannot create secondary index on {} of column {} with non-map type";
+                throw exceptions::invalid_request_exception(format(msg_format, to_sstring(target.type), cd.name_as_text()));
             }
             break;
     }
