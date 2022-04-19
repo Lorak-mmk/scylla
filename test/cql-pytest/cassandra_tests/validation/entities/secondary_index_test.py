@@ -989,8 +989,7 @@ def testIndexOnNonFrozenCollectionOfFrozenUDT(cql, test_keyspace):
             udt1 = a_tuple(1)
             udt2 = a_tuple(2)
             execute(cql, table, "INSERT INTO %s (k, v) VALUES (?, ?)", 1, {udt1})
-            # Reproduces #2962 - indexing of non-frozen collection is not
-            # yet supported in any form.
+
             assert_invalid_message(cql, table, "Cannot create secondary index on keys of column v with non-map type", "CREATE INDEX ON %s (keys(v))")
             assert_invalid_message(cql, table, "Cannot create secondary index on full of column v with non-frozen collection type", "CREATE INDEX ON %s (full(v))")
             index_name = unique_name()
