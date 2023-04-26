@@ -99,6 +99,8 @@
 
 #include <boost/algorithm/string/join.hpp>
 
+#include "rust/test_seastar_rs.hh"
+
 namespace fs = std::filesystem;
 
 seastar::metrics::metric_groups app_metrics;
@@ -539,6 +541,7 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
     sharded<locator::snitch_ptr> snitch;
 
     return app.run(ac, av, [&] () -> future<int> {
+        test_seastar_rs::spawn_sleep(40);
 
         auto&& opts = app.configuration();
 

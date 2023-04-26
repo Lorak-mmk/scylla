@@ -1,0 +1,10 @@
+[package]
+name = "test_seastar_rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+seastar = { git = "https://github.com/zpp-2022-rust-seastar/seastar-rs" }
+cxx = { version = "1.0.83", features = ["c++20"] }

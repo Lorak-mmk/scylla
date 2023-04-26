@@ -1037,6 +1037,7 @@ scylla_core = (['message/messaging_service.cc',
                 'service/broadcast_tables/experimental/lang.cc',
                 'tasks/task_manager.cc',
                 'rust/wasmtime_bindings/src/lib.rs',
+                'rust/test_seastar_rs/src/lib.rs',
                 'utils/to_string.cc',
                 'service/topology_state_machine.cc',
                 ] + [Antlr3Grammar('cql3/Cql.g')] + [Thrift('interface/cassandra.thrift', 'Cassandra')] \
@@ -1846,7 +1847,7 @@ with open(buildfile, 'w') as f:
               pool = console
               description = TEST {mode}
             rule rust_lib.{mode}
-              command = CARGO_BUILD_DEP_INFO_BASEDIR='.' cargo build --locked --manifest-path=rust/Cargo.toml --target-dir=$builddir/{mode} --profile=rust-{mode} $
+              command = PKG_CONFIG_PATH=`pwd`/$builddir/{mode}/seastar CARGO_BUILD_DEP_INFO_BASEDIR='.' cargo build --locked --manifest-path=rust/Cargo.toml --target-dir=$builddir/{mode} --profile=rust-{mode} $
                         && touch $out
               description = RUST_LIB $out
             ''').format(mode=mode, antlr3_exec=antlr3_exec, fmt_lib=fmt_lib, test_repeat=test_repeat, test_timeout=test_timeout, **modeval))
