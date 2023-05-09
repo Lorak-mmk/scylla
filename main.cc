@@ -100,6 +100,7 @@
 #include <boost/algorithm/string/join.hpp>
 
 #include "rust/test_seastar_rs.hh"
+#include <seastar/core/coroutine.hh>
 
 namespace fs = std::filesystem;
 
@@ -541,6 +542,9 @@ To start the scylla server proper, simply invoke as: scylla server (or just scyl
     sharded<locator::snitch_ptr> snitch;
 
     return app.run(ac, av, [&] () -> future<int> {
+        (void)seastar::smp::submit_to(0, [] () -> future<> {
+            co_await test_seastar_rs::sleep(40);
+        });
         test_seastar_rs::spawn_sleep(40);
 
         auto&& opts = app.configuration();
