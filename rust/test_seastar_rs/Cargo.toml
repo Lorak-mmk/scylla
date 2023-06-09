@@ -8,4 +8,5 @@ edition = "2021"
 [dependencies]
 seastar = { git = "https://github.com/zpp-2022-rust-seastar/seastar-rs" }
 cxx = { version = "1.0.83", features = ["c++20"] }
-cxx-async = { git = "https://github.com/kfernandez31/cxx-async", branch = "seastar" }
+# Don't change the version here, this dependency is patched in main Cargo.toml file
+cxx-async = "0.1"

@@ -982,6 +982,7 @@ dependencies = [
 name = "rust_combined"
 version = "0.1.0"
 dependencies = [
+ "cxx-async",
  "inc",
  "test_seastar_rs",
  "wasmtime_bindings",

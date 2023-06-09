@@ -8,9 +8,14 @@ edition = "2021"
 inc = { path = "inc", version = "0.1.0" }
 wasmtime_bindings = { path = "wasmtime_bindings", version = "0.1.0" }
 test_seastar_rs = { path = "test_seastar_rs", version = "0.1.0" }
+cxx-async = { git = "https://github.com/kfernandez31/cxx-async", branch = "seastar" }
 
 [lib]
 crate-type = ["staticlib"]
+
+# We want to use the same version of cxx-async in each module so that the correct header is included.
+[patch.crates-io]
+cxx-async = { git = "https://github.com/kfernandez31/cxx-async", branch = "seastar" }
 
 # The profiles below are Scylla specific. The cargo profile "rust-xyz" should
 # be used together with the ninja "xyz" mode.
